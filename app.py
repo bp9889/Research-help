@@ -29,6 +29,7 @@ if st.button("Check"):
         unique_keys = {c.key for c in citations}
         st.write(f"{len(citations)} citations found, {len(unique_keys)} different keys.")
         table = pd.DataFrame(
-            [{"key": c.key, "command": "\\" + c.cmd, "line": c.line} for c in citations]
+            [{"key": c.key, "command": "\\" + c.cmd, "line": c.line,
+              "col": c.col, "context": c.context} for c in citations]
         )
         st.dataframe(table, width="stretch")

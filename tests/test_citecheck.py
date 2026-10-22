@@ -38,3 +38,14 @@ def test_other_citation_commands():
 
 def test_no_citations():
     assert extract_citations("Nothing to see here.") == []
+
+def test_one_long_line_still_gives_different_columns():
+    result = extract_citations("In~\\cite{6}, one. In~\\cite{31}, two.")
+    assert [c.line for c in result] == [1, 1]
+    assert result[0].col == 4
+    assert result[1].col > result[0].col
+
+
+def test_context_shows_words_around_the_citation():
+    result = extract_citations("The authors found X in~\\cite{6}, then Y.")
+    assert "found X" in result[0].context and "then Y" in result[0].context
