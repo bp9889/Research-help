@@ -49,3 +49,17 @@ def test_one_long_line_still_gives_different_columns():
 def test_context_shows_words_around_the_citation():
     result = extract_citations("The authors found X in~\\cite{6}, then Y.")
     assert "found X" in result[0].context and "then Y" in result[0].context
+
+from core.citecheck import rewrite_keys
+
+
+def test_rewrite_changes_only_the_matching_key_and_keeps_spacing():
+    new, log = rewrite_keys("\\cite{a, Smith20 ,b}", {"Smith20": "smith20"}, "ch1.tex")
+    assert new == "\\cite{a, smith20 ,b}"
+    assert log == [{"file": "ch1.tex", "line": 1, "detail": "Smith20 -> smith20"}]
+
+
+def test_rewrite_leaves_commented_out_citations_alone():
+    new, log = rewrite_keys("% \\cite{Smith20}\n\\cite{Smith20}", {"Smith20": "smith20"})
+    assert new == "% \\cite{Smith20}\n\\cite{smith20}"
+    assert [row["line"] for row in log] == [2]
