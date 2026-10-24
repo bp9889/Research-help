@@ -76,3 +76,24 @@ def compare(citations, entries):
                                       "line in .bib": _place(e) if e.file else e.line})
 
     return report
+
+# ===== SECTION 5: citation order =====
+# With an unsorted style (unsrt, IEEEtran) the number in your PDF follows the
+# order of FIRST citation. Keys missing from the .bib show as [?] and use up
+# no number. The order across files follows the order you uploaded them in.
+def citation_order(citations, entries):
+    in_bib = {e.key.lower() for e in entries}
+    seen, rows, number = set(), [], 0
+    for c in citations:
+        low = c.key.lower()
+        if c.key == "*" or low in seen:
+            continue
+        seen.add(low)
+        found = low in in_bib
+        if found:
+            number += 1
+        prefix = f"{c.file}: " if c.file else ""
+        rows.append({"number": str(number) if found else "[?]", "key": c.key,
+                     "first cited at": f"{prefix}line {c.line}, col {c.col}",
+                     "in .bib": "yes" if found else "NO"})
+    return rows

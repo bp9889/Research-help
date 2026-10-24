@@ -4,7 +4,10 @@ import streamlit as st
 
 from core.actions import (Plan, apply_plan, build_zip, find_duplicate_groups,
                           make_diff, read_citations, read_entries)
-from core.compare import compare
+from core.compare import citation_order, compare
+from core.fields import check_fields, find_same_paper
+
+from core.roadmap import ICON, ROADMAP, score
 
 # ===== SECTION 2: page settings =====
 st.set_page_config(page_title="CiteDesk", page_icon="📚", layout="wide")
@@ -13,7 +16,17 @@ st.set_page_config(page_title="CiteDesk", page_icon="📚", layout="wide")
 st.title("CiteDesk")
 st.caption("Check your citations before you compile. Everything runs on your computer. "
            "Your original files are never changed: corrections are downloaded as copies.")
-
+# ===== SECTION 3b: progress bar for the project plan (sidebar) =====
+with st.sidebar:
+    st.header("Project progress")
+    all_items = [item for _, items in ROADMAP for item in items]
+    got, total = score(all_items)
+    st.progress(got / total, text=f"Whole plan: {got / total:.0%}")
+    for phase, items in ROADMAP:
+        g, t = score(items)
+        with st.expander(f"{phase} ({g / t:.0%})", expanded=phase == ROADMAP[0][0]):
+            for name, status in items:
+                st.write(f"{ICON[status]} {name}")
 
 # ===== SECTION 4: reading the files you give us =====
 # Uploaded files become a dictionary {file name: text}.
@@ -66,7 +79,6 @@ def show_finding(title, rows, ok_message):
     else:
         st.success(ok_message)
 
-
 # ===== SECTION 6: the report =====
 # No "Check" button any more: the report updates whenever the files change.
 citations = read_citations(tex_files)
@@ -90,7 +102,14 @@ else:
     show_finding("Unused entries", report.unused, "Every entry in the .bib is cited.")
 show_finding("Duplicate keys in the .bib", report.duplicates, "No duplicate keys.")
 show_finding("Case mismatches", report.case_mismatch, "No case mismatches.")
+show_finding("Entries with missing fields", check_fields(entries),
+             "Every entry has its required fields.")
+show_finding("Possible same paper under different keys", find_same_paper(entries),
+             "No look-alike entries found.")
 
+with st.expander("Citation order: the number each reference gets (unsorted styles like IEEEtran)"):
+    st.dataframe(pd.DataFrame(citation_order(citations, entries)), width="stretch")
+    
 with st.expander("All citations found"):
     st.dataframe(pd.DataFrame(
         [{"file": c.file, "key": c.key, "command": "\\" + c.cmd, "line": c.line,
@@ -147,11 +166,11 @@ if merge_on or fix_on or clean_on:
             tabs = st.tabs(list(changed))
             for tab, (name, text) in zip(tabs, changed.items()):
                 with tab:
-                    st.code(text, language="latex")
+                    st.code(text, language="latex", height = 400)
         st.subheader(f"Preview: {len(result.changes)} change(s)")
         st.dataframe(pd.DataFrame(result.changes), width="stretch")
         diff = make_diff({**tex_files, **bib_files}, {**result.tex_files, **result.bib_files})
         with st.expander("Show the exact differences"):
-            st.code(diff, language="diff")
+            st.code(diff, language="diff", height = 300)
         st.download_button("Download corrected files (zip)", data=build_zip(result),
                            file_name="citedesk_corrected.zip", mime="application/zip")
