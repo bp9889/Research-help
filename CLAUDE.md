@@ -71,6 +71,7 @@ and wrap code in `st.container(height=...)`.
       actions.py            merge duplicates, fix case, remove unused,
                             preview diff, zip download
       export.py             all findings as one CSV file
+      tidy.py               strict entry reader, owner's BibTeX style, wording guard
       roadmap.py            the project plan shown in the sidebar
     tests/                  pytest tests, one file per module
     local_data/             private test files (git-ignored)
@@ -101,7 +102,8 @@ Key facts and decisions:
   A case mismatch is reported separately from a missing key.
 - `\nocite{*}` means every entry is included, so nothing is reported unused.
 - `apply_plan` runs in a fixed order: merge duplicates, merge same paper,
-  fix case, remove unused. Files are re-read after each step. Tests document why.
+  fix case, remove unused, tidy. Files are re-read after each step. Tests
+  document why.
 - "Remove unused" is only offered after the user confirms they uploaded every
   .tex file, because on one chapter most entries look unused.
 - The page has no Check button. Results recompute on every rerun, because
@@ -130,6 +132,11 @@ Key facts and decisions:
   group is merged only when the user picks the key to keep. After a merge a
   command that cited both keys, like \cite{a,b}, becomes \cite{a,a}.
 - Fields are read by a small parser, not a full BibTeX parser.
+- Tidy only rewrites an entry it can read exactly. Entries that join strings
+  with #, have a % comment inside, or have unbalanced braces are left as
+  they were and listed in the change log as "tidy skipped". Tidy never
+  removes duplicates; use the merge actions for that. A comment written
+  after a closing brace on the same line moves to its own line.
 
 ## 9. Good next tasks (each needs tests)
 
