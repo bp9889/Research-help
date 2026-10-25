@@ -6,7 +6,7 @@ from core.actions import (Plan, apply_plan, build_zip, find_duplicate_groups,
                           make_diff, read_citations, read_entries)
 from core.compare import citation_order, compare
 from core.export import findings_to_csv
-from core.fields import check_fields, find_same_paper
+from core.fields import check_fields, find_same_paper, find_same_paper_groups
 
 from core.roadmap import ICON, ROADMAP, score
 
@@ -131,7 +131,7 @@ with st.expander("All citations found"):
 st.divider()
 st.header("Fix and clean")
 st.caption("Pick actions, check the preview, then download. Steps run in this order: "
-           "merge duplicates, fix case, remove unused.")
+           "merge duplicates, merge same paper, fix case, remove unused.")
 
 # 7a. Merge duplicate keys
 groups = find_duplicate_groups(bib_files)
@@ -150,6 +150,21 @@ if merge_on:
             format_func=lambda i: f"Version {i + 1}", key=f"keep_{g.key.lower()}",
             horizontal=True)
 
+# 7a2. Merge the same paper under different keys (you decide group by group)
+same_groups = find_same_paper_groups(entries)
+same_on = st.checkbox("Merge the same paper under different keys", disabled=not same_groups)
+same_keep = {}
+if same_on:
+    st.caption("Look-alike entries can be different papers (two editions of a book), "
+               "so a group is merged only when you choose the key to keep.")
+    for g in same_groups:
+        for e in g.entries:
+            st.code(f"% {e.file}, line {e.line}\n{e.raw}", language="latex")
+        choices = ["Do not merge"] + list(dict.fromkeys(e.key for e in g.entries))
+        pick = st.radio("Key to keep", choices, key=f"same_{g.id}", horizontal=True)
+        if pick != "Do not merge":
+            same_keep[g.id] = pick
+
 # 7b. Fix case mismatches
 fix_on = st.checkbox("Fix case mismatches (changes the key inside \\cite in your .tex files)",
                      disabled=not report.case_mismatch)
@@ -161,10 +176,11 @@ clean_on = st.checkbox("Remove unused entries (they are saved in removed_entries
 clean_on = clean_on and all_files
 
 plan = Plan(merge_duplicates=merge_on, keep_choice=keep_choice,
+            merge_same_paper=same_on, same_keep=same_keep,
             fix_case=fix_on, clean_unused=clean_on)
 
 # ===== SECTION 8: preview and download =====
-if merge_on or fix_on or clean_on:
+if merge_on or same_on or fix_on or clean_on:
     result = apply_plan(tex_files, bib_files, plan)
     if not result.changes:
         st.info("Nothing to change with the selected options.")

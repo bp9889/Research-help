@@ -1,7 +1,7 @@
 from core.bibreader import extract_bib_entries
 from core.compare import citation_order
 from core.citecheck import extract_citations
-from core.fields import check_fields, find_same_paper, parse_fields
+from core.fields import check_fields, find_same_paper, find_same_paper_groups, parse_fields
 
 
 def entries(bib):
@@ -52,3 +52,13 @@ def test_citation_order_numbers_follow_first_citation_and_skip_missing_keys():
     bib = "@article{a,\n}\n@article{b,\n}\n"
     rows = citation_order(extract_citations(tex), entries(bib))
     assert [(r["key"], r["number"]) for r in rows] == [("b", "1"), ("zzz", "[?]"), ("a", "2")]
+
+
+def test_groups_carry_entries_reasons_and_a_stable_id():
+    bib = ("@article{b,\n title={Deep learning for power systems},\n doi={10.1/x}\n}\n"
+           "@article{A,\n title={Deep learning for power systems},\n doi={10.1/X}\n}\n")
+    groups = find_same_paper_groups(entries(bib))
+    assert len(groups) == 1
+    assert [e.key for e in groups[0].entries] == ["b", "A"]
+    assert groups[0].why == ["same DOI", "same title"]
+    assert groups[0].id == "a|b"          # lowercase keys, sorted
