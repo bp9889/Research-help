@@ -131,7 +131,7 @@ with st.expander("All citations found"):
 st.divider()
 st.header("Fix and clean")
 st.caption("Pick actions, check the preview, then download. Steps run in this order: "
-           "merge duplicates, merge same paper, fix case, remove unused.")
+           "merge duplicates, merge same paper, fix case, remove unused, tidy.")
 
 # 7a. Merge duplicate keys
 groups = find_duplicate_groups(bib_files)
@@ -175,12 +175,16 @@ clean_on = st.checkbox("Remove unused entries (they are saved in removed_entries
                        disabled=not all_files or report.nocite_all)
 clean_on = clean_on and all_files
 
+# 7d. Tidy the .bib files (last step; it reformats every entry)
+tidy_on = st.checkbox("Tidy the .bib files in my style (layout only: words are never changed, "
+                      "entries are never sorted or removed)")
+
 plan = Plan(merge_duplicates=merge_on, keep_choice=keep_choice,
             merge_same_paper=same_on, same_keep=same_keep,
-            fix_case=fix_on, clean_unused=clean_on)
+            fix_case=fix_on, clean_unused=clean_on, tidy=tidy_on)
 
 # ===== SECTION 8: preview and download =====
-if merge_on or same_on or fix_on or clean_on:
+if merge_on or same_on or fix_on or clean_on or tidy_on:
     result = apply_plan(tex_files, bib_files, plan)
     if not result.changes:
         st.info("Nothing to change with the selected options.")

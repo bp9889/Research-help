@@ -9,6 +9,7 @@ from .bibreader import extract_bib_entries
 from .citecheck import extract_citations, rewrite_keys
 from .compare import compare
 from .fields import find_same_paper_groups
+from .tidy import tidy_bib
 
 # ===== SECTION 2: helpers that read many files at once =====
 # tex_files and bib_files are dictionaries: {"chapter1.tex": "text...", ...}
@@ -105,6 +106,7 @@ class Plan:
     same_keep: dict = field(default_factory=dict)     # group id -> key to keep
     fix_case: bool = False
     clean_unused: bool = False
+    tidy: bool = False        # rewrite the .bib files in the owner's style (last step)
 
 @dataclass
 class Result:
@@ -114,7 +116,8 @@ class Result:
     changes: list = field(default_factory=list)   # {"action","file","line","detail"}
 
 # ===== SECTION 6: apply the plan =====
-# Order matters: merge duplicates, merge same paper, fix case, then remove unused.
+# Order matters: merge duplicates, merge same paper, fix case, remove unused,
+# and tidy last, because tidy rewrites the layout of every entry.
 # After each step the files are read again, so each step sees the result
 # of the one before. Your original texts are never modified: we work on copies.
 def apply_plan(tex_files, bib_files, plan):
@@ -156,6 +159,11 @@ def apply_plan(tex_files, bib_files, plan):
                 result.changes.append({"action": "remove unused", "file": e.file,
                                        "line": e.line, "detail": f"removed entry {e.key}"})
             bib = remove_entries(bib, drop)
+
+    if plan.tidy:
+        for name, text in list(bib.items()):
+            bib[name], log = tidy_bib(text, name)
+            result.changes += log
 
     result.tex_files, result.bib_files = tex, bib
     return result
