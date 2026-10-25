@@ -5,6 +5,7 @@ import streamlit as st
 from core.actions import (Plan, apply_plan, build_zip, find_duplicate_groups,
                           make_diff, read_citations, read_entries)
 from core.compare import citation_order, compare
+from core.export import findings_to_csv
 from core.fields import check_fields, find_same_paper
 
 from core.roadmap import ICON, ROADMAP, score
@@ -72,7 +73,12 @@ if not tex_files or not bib_files:
 
 
 # ===== SECTION 5: helper that shows one kind of finding =====
+# Every finding shown is also remembered in FINDINGS, so section 6b can put
+# them all in one CSV file.
+FINDINGS = {}
+
 def show_finding(title, rows, ok_message):
+    FINDINGS[title] = rows
     st.subheader(f"{title} ({len(rows)})")
     if rows:
         st.dataframe(pd.DataFrame(rows), width="stretch")
@@ -106,6 +112,12 @@ show_finding("Entries with missing fields", check_fields(entries),
              "Every entry has its required fields.")
 show_finding("Possible same paper under different keys", find_same_paper(entries),
              "No look-alike entries found.")
+
+# ===== SECTION 6b: download the findings =====
+# utf-8-sig adds a small marker so Excel shows accents and other scripts correctly.
+st.download_button("Download all findings (CSV)",
+                   data=findings_to_csv(FINDINGS).encode("utf-8-sig"),
+                   file_name="citedesk_findings.csv", mime="text/csv")
 
 with st.expander("Citation order: the number each reference gets (unsorted styles like IEEEtran)"):
     st.dataframe(pd.DataFrame(citation_order(citations, entries)), width="stretch")
