@@ -100,8 +100,8 @@ Key facts and decisions:
 - BibTeX ignores key case, so keys are compared in lowercase as well as exact.
   A case mismatch is reported separately from a missing key.
 - `\nocite{*}` means every entry is included, so nothing is reported unused.
-- `apply_plan` runs in a fixed order: merge duplicates, fix case, remove
-  unused. Files are re-read after each step. A test documents why.
+- `apply_plan` runs in a fixed order: merge duplicates, merge same paper,
+  fix case, remove unused. Files are re-read after each step. Tests document why.
 - "Remove unused" is only offered after the user confirms they uploaded every
   .tex file, because on one chapter most entries look unused.
 - The page has no Check button. Results recompute on every rerun, because
@@ -126,7 +126,9 @@ Key facts and decisions:
 - An entry must start at the beginning of a line to be seen.
 - Citations produced by custom macros or inside verbatim blocks are not seen.
 - Removing entries can leave an extra blank line.
-- Same-paper detection reports only; it does not merge.
+- Same-paper detection can be wrong (two editions of a book share a title), so a
+  group is merged only when the user picks the key to keep. After a merge a
+  command that cited both keys, like \cite{a,b}, becomes \cite{a,a}.
 - Fields are read by a small parser, not a full BibTeX parser.
 
 ## 9. Good next tasks (each needs tests)

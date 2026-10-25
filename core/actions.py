@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from .bibreader import extract_bib_entries
 from .citecheck import extract_citations, rewrite_keys
 from .compare import compare
+from .fields import find_same_paper_groups
 
 # ===== SECTION 2: helpers that read many files at once =====
 # tex_files and bib_files are dictionaries: {"chapter1.tex": "text...", ...}
@@ -63,11 +64,45 @@ def find_duplicate_groups(bib_files):
             result.append(DuplicateGroup(versions[0].key, versions, same))
     return result
 
+# ===== SECTION 4b: merging the same paper under different keys =====
+# same_keep = {group id: the key to keep}. A group that is not in same_keep is
+# left alone, because look-alikes can be different papers (two editions of a
+# book have the same title). For each group we
+#   1. cut the other entries out of the .bib (they are saved in the removed list),
+#   2. rewrite every \cite of the removed keys to the kept key.
+# A citation is matched by its exact spelling, so Smith20 and smith20 both work.
+def merge_same_paper(tex, bib, same_keep):
+    tex, removed, changes, drop, mapping = dict(tex), [], [], [], {}
+    citations = read_citations(tex)
+    for g in find_same_paper_groups(read_entries(bib)):
+        wanted = same_keep.get(g.id)
+        keys = {e.key.lower(): e.key for e in g.entries}
+        if wanted is None or wanted.lower() not in keys:
+            continue                                   # no choice made: leave it
+        keep = keys[wanted.lower()]
+        for e in g.entries:
+            if e.key.lower() == keep.lower():
+                continue
+            drop.append(e)
+            removed.append({"reason": "same paper", "entry": e})
+            changes.append({"action": "merge same paper", "file": e.file, "line": e.line,
+                            "detail": f"removed {e.key} (same paper as {keep})"})
+            for c in citations:
+                if c.key.lower() == e.key.lower():
+                    mapping[c.key] = keep
+    if mapping:
+        for name, text in list(tex.items()):
+            tex[name], log = rewrite_keys(text, mapping, name)
+            changes += [{"action": "merge same paper", **row} for row in log]
+    return tex, remove_entries(bib, drop), removed, changes
+
 # ===== SECTION 5: the plan and the result =====
 @dataclass
 class Plan:
     merge_duplicates: bool = False
     keep_choice: dict = field(default_factory=dict)   # lowercase key -> version to keep
+    merge_same_paper: bool = False
+    same_keep: dict = field(default_factory=dict)     # group id -> key to keep
     fix_case: bool = False
     clean_unused: bool = False
 
@@ -79,7 +114,7 @@ class Result:
     changes: list = field(default_factory=list)   # {"action","file","line","detail"}
 
 # ===== SECTION 6: apply the plan =====
-# Order matters: merge duplicates first, then fix case, then remove unused.
+# Order matters: merge duplicates, merge same paper, fix case, then remove unused.
 # After each step the files are read again, so each step sees the result
 # of the one before. Your original texts are never modified: we work on copies.
 def apply_plan(tex_files, bib_files, plan):
@@ -97,6 +132,11 @@ def apply_plan(tex_files, bib_files, plan):
                     result.changes.append({"action": "merge duplicate", "file": v.file,
                                            "line": v.line, "detail": f"removed extra copy of {v.key}"})
         bib = remove_entries(bib, drop)
+
+    if plan.merge_same_paper:
+        tex, bib, removed, changes = merge_same_paper(tex, bib, plan.same_keep)
+        result.removed += removed
+        result.changes += changes
 
     if plan.fix_case:
         report = compare(read_citations(tex), read_entries(bib))

@@ -1,5 +1,6 @@
 # ===== SECTION 1: imports =====
 import re
+from dataclasses import dataclass
 
 from .bibreader import _find_closing
 
@@ -74,7 +75,15 @@ def _norm_title(t):
     t = re.sub(r"\\[A-Za-z]+|[{}$\\]", "", t.lower())
     return re.sub(r"[^a-z0-9]+", " ", t).strip()
 
-def find_same_paper(entries):
+# One group of look-alike entries. The id is the sorted lowercase keys joined
+# with "|", so it stays the same even when extra copies of a key are removed.
+@dataclass
+class SamePaperGroup:
+    id: str
+    entries: list       # BibEntry objects, in file order
+    why: list           # for example ["same DOI", "same title"]
+
+def find_same_paper_groups(entries):
     parent = list(range(len(entries)))
 
     def find(x):
@@ -100,17 +109,26 @@ def find_same_paper(entries):
                 parent[find(i)] = find(seen[sig])
                 links.append((i, sig[0]))
 
-    groups = {}
+    members = {}
     for i in range(len(entries)):
-        groups.setdefault(find(i), []).append(i)
-    rows = []
-    for root, idx in groups.items():
+        members.setdefault(find(i), []).append(i)
+    groups = []
+    for root, idx in members.items():
         if len(idx) > 1:
             es = [entries[i] for i in idx]
-            rows.append({
-                "keys": ", ".join(dict.fromkeys(e.key for e in es)),
-                "why": ", ".join(sorted({r for i, r in links if find(i) == root})),
-                "years": ", ".join(parse_fields(e.raw).get("year", "?") for e in es),
-                "where": ", ".join(str(_place(e)) for e in es),
-            })
+            why = sorted({r for i, r in links if find(i) == root})
+            group_id = "|".join(sorted({e.key.lower() for e in es}))
+            groups.append(SamePaperGroup(group_id, es, why))
+    return groups
+
+# The table the page shows. Built from the groups above.
+def find_same_paper(entries):
+    rows = []
+    for g in find_same_paper_groups(entries):
+        rows.append({
+            "keys": ", ".join(dict.fromkeys(e.key for e in g.entries)),
+            "why": ", ".join(g.why),
+            "years": ", ".join(parse_fields(e.raw).get("year", "?") for e in g.entries),
+            "where": ", ".join(str(_place(e)) for e in g.entries),
+        })
     return rows
