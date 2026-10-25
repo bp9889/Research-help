@@ -70,6 +70,7 @@ and wrap code in `st.container(height=...)`.
                             same paper under different keys
       actions.py            merge duplicates, fix case, remove unused,
                             preview diff, zip download
+      export.py             all findings as one CSV file
       roadmap.py            the project plan shown in the sidebar
     tests/                  pytest tests, one file per module
     local_data/             private test files (git-ignored)
