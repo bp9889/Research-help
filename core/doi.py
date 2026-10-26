@@ -163,11 +163,23 @@ def _joined(value):                                          # ISSN and ISBN com
 # ===== SECTION 8: from record to BibTeX =====
 # CSL type -> BibTeX type. Anything not listed becomes misc rather than a guess.
 TYPE_MAP = {
-    "article-journal": "article", "article-magazine": "article", "article-newspaper": "article",
+    # Standard CSL types
+    "article-journal": "article", 
+    "article-magazine": "article", 
+    "article-newspaper": "article",
     "paper-conference": "inproceedings",
     "book": "book",
-    "chapter": "incollection", "entry-encyclopedia": "incollection", "entry-dictionary": "incollection",
+    "chapter": "incollection", 
+    "entry-encyclopedia": "incollection", 
+    "entry-dictionary": "incollection",
     "report": "techreport",
+    
+    # Crossref API types (commonly returned when querying DOIs)
+    "journal-article": "article",
+    "book-chapter": "incollection",
+    "proceedings-article": "inproceedings",
+    "monograph": "book",
+    "dissertation": "phdthesis",
 }
 
 def bibtex_type(csl):
