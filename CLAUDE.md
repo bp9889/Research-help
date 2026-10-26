@@ -10,9 +10,9 @@ with Python and Streamlit. The owner pastes or uploads .tex and .bib files and
 gets a report plus safe, previewed corrections. It is also a portfolio project,
 so code quality, tests and clear documentation matter as much as features.
 
-Phase 1 (the cite checker) is the current focus. Later phases: BibTeX tidy,
-DOI-to-BibTeX import, a paper tracker, and a public demo. The live status of
-every item is in `core/roadmap.py` (the owner edits it by hand).
+Phase 1 (the cite checker), BibTeX tidy and DOI-to-BibTeX import are built.
+Still to do: the renumber tool, a paper tracker, and a public demo. The live
+status of every item is in `core/roadmap.py` (the owner edits it by hand).
 
 ## 2. The owner and how to help them
 
@@ -72,6 +72,7 @@ and wrap code in `st.container(height=...)`.
                             preview diff, zip download
       export.py             all findings as one CSV file
       tidy.py               strict entry reader, owner's BibTeX style, wording guard
+      doi.py                DOI and title lookup (the only file that uses the internet)
       roadmap.py            the project plan shown in the sidebar
     tests/                  pytest tests, one file per module
     local_data/             private test files (git-ignored)
@@ -128,6 +129,10 @@ Key facts and decisions:
 - An entry must start at the beginning of a line to be seen.
 - Citations produced by custom macros or inside verbatim blocks are not seen.
 - Removing entries can leave an extra blank line.
+- DOI import writes names and text as the server sends them (UTF-8, not
+  LaTeX accents). Types it does not know become misc. A title search can only
+  guess, so the user picks the paper. Markup is removed with a simple pattern,
+  so text like a<b and c>d could lose a piece. Always read the result once.
 - Same-paper detection can be wrong (two editions of a book share a title), so a
   group is merged only when the user picks the key to keep. After a merge a
   command that cited both keys, like \cite{a,b}, becomes \cite{a,a}.
@@ -145,10 +150,10 @@ Key facts and decisions:
    citation; uncited entries need numbers too or must be removed first, or
    keys can collide. Reuse `rewrite_keys` for .tex; add a key rename for .bib
    using `BibEntry.start` and `raw`. Show an old-to-new table first.
-2. Merge action for "same paper under different keys": pick one key, rewrite
+2. (done) Merge action for "same paper under different keys": pick one key, rewrite
    the other key in every \cite, remove the extra entry, log everything.
-3. Download the findings as CSV.
-4. BibTeX tidy with the owner's profile: lowercase field names, values in curly
+3. (done) Download the findings as CSV.
+4. (done) BibTeX tidy with the owner's profile: lowercase field names, values in curly
    braces, bare numbers (year = 2020), tab indent, values aligned (name padded
    to 13 characters then "= "), no blank lines between entries, no trailing
    commas, duplicates by key and citation, comments kept, entries unsorted,
@@ -156,7 +161,7 @@ Key facts and decisions:
    booktitle, location, on, publisher, address, series, volume, number, pages,
    doi, isbn, issn, url, urldate, copyright, category, note, metadata. Add a
    guard that proves wording did not change.
-5. DOI to BibTeX: fetch CSL-JSON from doi.org with the header
+5. (done) DOI to BibTeX: fetch CSL-JSON from doi.org with the header
    `Accept: application/vnd.citationstyles.csl+json` (works for all DOI
    registries); title search through the Crossref API returning candidates the
    user must confirm. Send a contact email in the User-Agent, cache results,
