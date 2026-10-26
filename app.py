@@ -5,6 +5,8 @@ import streamlit as st
 from core.actions import (Plan, apply_plan, build_zip, find_duplicate_groups,
                           make_diff, read_citations, read_entries)
 from core.compare import citation_order, compare
+from core.doi import (clean_doi, csl_to_bibtex, fetch_csl, missing_fields, search_title,
+                      suggest_key, valid_key)
 from core.export import findings_to_csv
 from core.fields import check_fields, find_same_paper, find_same_paper_groups
 
@@ -66,6 +68,64 @@ else:
         tex_files = {"pasted.tex": tex_text}
     if bib_text.strip():
         bib_files = {"pasted.bib": bib_text}
+
+# ===== SECTION 4b: add a reference from a DOI or a title (needs internet) =====
+# Nothing here runs until you press a button, and the checker below never
+# depends on it. Answers are cached for the session, so a repeat is instant.
+# The converted entry is shown for you to copy. Your files are not touched.
+def load_paper(doi, email):
+    cache = st.session_state.setdefault("lookup_cache", {})
+    record, message = fetch_csl(doi, email, cache=cache)
+    if record:
+        st.session_state["doi_record"] = record
+    else:
+        st.session_state.pop("doi_record", None)
+        st.error(message)
+
+with st.expander("Add a reference from a DOI or a title (needs internet)"):
+    email = st.text_input("Your email (sent to the server in the User-Agent, as Crossref asks)")
+    ready = "@" in email
+    by_doi, by_title = st.tabs(["I have a DOI", "Search by title"])
+    with by_doi:
+        doi_text = st.text_input("DOI or doi.org link")
+        if st.button("Fetch BibTeX", disabled=not ready):
+            doi = clean_doi(doi_text)
+            if doi:
+                load_paper(doi, email)
+            else:
+                st.error("That does not look like a DOI. A DOI starts with 10.")
+    with by_title:
+        title_text = st.text_input("Part of the title")
+        if st.button("Search Crossref", disabled=not ready):
+            cache = st.session_state.setdefault("lookup_cache", {})
+            found, message = search_title(title_text, email, cache=cache)
+            st.session_state["doi_candidates"] = found
+            if message:
+                st.warning(message)
+        found = st.session_state.get("doi_candidates", [])
+        if found:
+            st.dataframe(pd.DataFrame(found), width="stretch")
+            index = st.radio("A title search can only guess. Which one is your paper?",
+                             range(len(found)),
+                             format_func=lambda i: f"{found[i]['authors']} ({found[i]['year']}): "
+                                                   f"{found[i]['title'][:70]}")
+            if st.button("Use this paper"):
+                load_paper(found[index]["doi"], email)
+    record = st.session_state.get("doi_record")
+    if record:
+        taken = {e.key for e in read_entries(bib_files)}
+        key = st.text_input("Citation key (you can change it)", value=suggest_key(record, taken))
+        if not valid_key(key):
+            st.error("A key cannot be empty or contain spaces, commas, braces, # or %.")
+        else:
+            if key.lower() in {k.lower() for k in taken}:
+                st.warning("This key is already in your .bib. Pick another one.")
+            bibtex = csl_to_bibtex(record, key)
+            st.code(bibtex, language="latex")
+            gaps = missing_fields(bibtex)
+            if gaps:
+                st.warning(f"The server did not send: {gaps[0]['missing']}. Add it by hand if you need it.")
+            st.caption("Copy it into your .bib file, then upload the .bib again.")
 
 if not tex_files or not bib_files:
     st.info("Give me at least one .tex file and one .bib file to start.")
