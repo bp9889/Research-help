@@ -29,4 +29,10 @@ ROADMAP = [
         ("Public demo with sample data", "todo"),
         ("Short technical write-up", "todo"),
     ]),
-]
+] 
+ICON = {"done": "✅", "doing": "🔄", "todo": "⬜"}
+
+# A finished item counts 1, an item in progress counts half.
+def score(items):
+    points = sum({"done": 1, "doing": 0.5}.get(status, 0) for _, status in items)
+    return points, len(items)
