@@ -58,6 +58,8 @@ KEYWORDS_START = re.compile(r"^(index terms|keywords)\s*[-\u2013\u2014:]*\s*", r
 # text (kept with \tag so cross-references still match), and a cheap check
 # for broken LaTeX. The real test is compiling, which is still done by hand.
 NUMBER_AT_END = re.compile(r"\\q?quad\s*\(\s*(\d+(?:\.\d+)?)\s*\)\s*$")
+EQ_NUMBER = re.compile(r"\\q?quad\s*\(\s*\d+(?:\.\d+)?\s*\)")
+RELATIONS = ("=", "<", ">", "\\le", "\\ge", "\\approx", "\\to", "\\sim")
 SPACED_WORD = re.compile(r"(?<![\\A-Za-z])(?:[a-z] ){2,}[a-z](?![A-Za-z])")
 
 
@@ -75,7 +77,13 @@ def formula_to_latex(text):
     None means the formula failed the check and must stay a comment."""
     latex = text.strip().strip("$").strip()
     if not latex:
-        return None, ["no LaTeX returned"]
+        return None, ["no LaTeX returned"] 
+    dropped = ""
+    numbers = list(EQ_NUMBER.finditer(latex))
+    if numbers:
+        tail = re.sub(r"^\s*(\\\\)?\s*", "", latex[numbers[-1].end():])
+        if tail and not any(r in tail for r in RELATIONS):
+            dropped, latex = tail, latex[:numbers[-1].end()]     
     tag = ""
     match = NUMBER_AT_END.search(latex)
     if match:
@@ -90,6 +98,9 @@ def formula_to_latex(text):
     if failures:
         return None, failures
     warnings = []
+    if dropped:
+        warnings.append("text after the equation number was dropped (probably from the "
+                        "neighbouring column): " + " ".join(dropped.split()))
     if SPACED_WORD.search(latex):
         warnings.append("a word may be spelled letter by letter (like d i a g)")
     if "\\\\" in latex and "\\begin" not in latex:

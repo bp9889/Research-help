@@ -141,3 +141,16 @@ def test_formula_block_in_a_document():
     assert "% FORMULA (page 1): not inserted (unbalanced braces)" in result.tex
     assert len(result.notes) == 2
     assert "\\usepackage{amsmath,amssymb}" in result.tex
+
+def test_text_after_the_equation_number_is_dropped_and_reported():
+    equation, problems = formula_to_latex(
+        r"A = Y \, d ( c ) \quad ( 2 ) \\ \mathrm { energy \ scalar }")
+    assert equation.endswith("\\tag{2}\n\\end{equation*}")
+    assert "energy" not in equation
+    assert "aligned" not in equation
+    assert any("energy" in p and "neighbouring column" in p for p in problems)
+
+
+def test_a_second_row_with_a_relation_is_kept():
+    equation, _ = formula_to_latex(r"a = b \quad ( 1 ) \\ c = d")
+    assert "c = d" in equation
