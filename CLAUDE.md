@@ -2,7 +2,7 @@
 
 Read this file first. It explains what the project is, how it is built, the
 rules the owner cares about, the problems already found, and where to help next.
-Last updated: 27 October 2026.
+Last updated: 31 October 2026.
 
 ## 1. What this project is
 
@@ -16,7 +16,9 @@ files and gets a report plus safe, previewed corrections. BibTeX tidy, DOI to
 BibTeX import, same-paper merge and CSV export are built too. Parked for later:
 the renumber tool and the paper tracker.
 
-Tool 2, PDF to LaTeX: the current focus, first slice just written. It turns a
+Tool 2, PDF to LaTeX: the current focus. The reader, the writer and display
+equations work; figures, tables, captions and the reference list are still
+placeholders. It turns a
 born-digital PDF (one that has a text layer) into a draft LaTeX project, using
 only free Python libraries that run on the owner's computer (Docling first).
 No paid services such as Mathpix, because the site must stay free for now. The
@@ -89,8 +91,15 @@ Docling needs pandas below 3, so `requirements.txt` must say `pandas<3`
 
 Experiments (run from the repository root, with local_data/ holding test PDFs):
 
-    python experiments/try_docling.py local_data/one.pdf    (lists blocks, writes a .md)
-    python -m experiments.try_writer local_data/one.pdf     (writes a .tex, prints notes)
+    python experiments/try_docling.py local_data/one.pdf          (lists blocks, writes a .md)
+    python -m experiments.try_writer local_data/one.pdf           (writes a .tex, prints notes and
+                                                                   timings; reuses saved blocks)
+    python -m experiments.try_writer local_data/one.pdf --fresh   (converts the PDF again)
+    python -m experiments.time_docling local_data/one.pdf [pages] (times five Docling settings)
+
+The owner's test files are local_data/one.pdf (two-column) and local_data/two.pdf
+(single-column). The saved blocks (`<pdf>.blocks.json`) are not refreshed
+automatically: use `--fresh` after changing the PDF or the Docling settings.
 
 Use `-m` for anything that imports `core`. A plain script run puts the script's
 own folder on the path, so `core` is not found. The project folder name
@@ -120,7 +129,8 @@ and wrap code in `st.container(height=...)`.
       pdfreader.py          PDF to Blocks; the ONLY file that knows Docling
       latexwriter.py        Blocks to a .tex text, plus notes and raw references
       roadmap.py            the project plan shown in the sidebar
-    experiments/            small scripts to look at what a library returns
+    experiments/            small scripts: try_docling, try_writer (saved blocks and
+                            timings), time_docling
     tests/                  pytest tests, one file per module
     local_data/             private test files and PDFs (git-ignored)
 
@@ -189,6 +199,22 @@ Data flow: PDF -> `read_pdf` (Docling) -> list of `Block(kind, text, page)` ->
 - `escape_latex` changes one character at a time, so nothing is escaped twice.
 - Paragraphs with math-like characters (Greek, math operators, math-italic
   letters) get a note. The text itself is left as it is.
+- `read_pdf` switches on Docling's formula recognition. Each formula comes back
+  as LaTeX with spaces between tokens (`\hat { x } ( t , k )`), usually with
+  the equation number inside the text (`\quad ( 2 )`).
+- `formula_to_latex` turns the number into `\tag{n}` inside an `equation*`
+  environment (the preamble loads amsmath and amssymb), so numbers and
+  cross-references still match the paper. It checks braces, \left/\right and
+  \begin/\end; a formula that fails stays a comment plus a note. Several rows
+  are wrapped in `aligned`. Words after the last equation number that contain
+  no relation sign are dropped and reported in the note (residue from the
+  neighbouring column; written from the owner's description, so confirm it on
+  the real PDF). A word spelled letter by letter (`d i a g`) is only warned
+  about, never changed.
+- Every inserted equation keeps the note "not compile-checked". The compile
+  check is still done by hand in Overleaf.
+- `save_blocks` and `load_blocks` store the Block list as JSON, so the writer
+  can be changed and run again without converting the PDF again.
 - The output uses `fontspec`, so it must be compiled with XeLaTeX or LuaLaTeX
   (in Overleaf: Menu, Compiler). With pdflatex it fails. Missing-glyph
   warnings are expected until the math step is built.
@@ -303,6 +329,20 @@ come from memory of the library's API or licence and must be checked.
 11. Page headers, footers and page numbers were removed correctly, and the
     reading order of the two-column paper was right.
 
+12. Equation recognition works: all five display equations of the two-column
+    test paper came back as usable LaTeX and compiled. Quality problems (seen):
+    bold letters are lost; one symbol was misread (a stray tilde over a B);
+    the equation number sits inside the text; a word is spelled letter by
+    letter (`d i a g`); and words from the neighbouring column landed inside
+    one equation. The model reads a picture of the formula area, so a formula
+    box that touches another column picks up its words. The proper fix is
+    bounding boxes (clip the box to its column). Until then there are only
+    heuristics plus notes. A decoded equation cannot be trusted blindly, so a
+    review view (the PDF crop beside the LaTeX, editable) is planned.
+13. On the single-column test paper the reference list arrived as 7 blocks for
+    about 33 references, and only 1 caption was found for 3 tables (table
+    captions arrive as plain text).
+
 ### 9C. Likely next problems (expected)
 
 - Figures are only placeholders. Cropping a figure region from the rendered page
@@ -343,7 +383,25 @@ come from memory of the library's API or licence and must be checked.
 - Review page idea: the original PDF page rendered next to the generated LaTeX
   and the notes table, with the notes filterable by kind.
 
-### 9F. Working together
+### 9F. Speed
+
+Conversion on a CPU is slow, and equation recognition adds to it. The owner
+has not yet measured where the time goes. Plans, in order:
+
+1. Measure with `experiments/time_docling.py` (five settings, first pages only).
+2. Saved blocks, so only the first run is slow (done: `save_blocks`).
+3. Switch off what a born-digital PDF does not need: OCR, perhaps table
+   recognition, and make equations optional ("quick draft", then "add
+   equations"). Option names such as `do_ocr`, `do_table_structure` and
+   `do_formula_enrichment` and the `page_range` argument are from memory.
+   (verify)
+4. Convert only the first pages while developing.
+5. Use all CPU threads (Docling has accelerator options; verify the name).
+6. For a public site, assume conversion is heavy: limit the page count, show a
+   progress bar and an estimate, cache results by file hash, or use the tool
+   locally. Decide when the Streamlit page is built.
+
+### 9G. Working together
 
 - `core/roadmap.py` is edited by the owner by hand. Tell the owner which
   statuses to change rather than editing it in a feature branch, to avoid
@@ -365,27 +423,32 @@ Cite checker (parked):
    Streamlit app receives uploaded files on its server, so a public demo must
    use bundled sample data unless processing moves into the browser.
 
-PDF to LaTeX, in this order (one step at a time):
+PDF to LaTeX, in this order (one step at a time). Done: the reader and writer
+slice, and equations inserted with number tags and checks.
 
-1. Confirm the first slice (reader and writer) on the owner's two test PDFs;
-   record the notes counts in the README. Create `requirements-pdf.txt` with a
-   pinned Docling version.
-2. Turn on formula recognition. Compile each decoded equation on its own;
-   keep failing ones as comments with a note.
-3. Report suspicious text: glued words, lost hyphens, broken accents. Report
-   only; never change wording.
-4. Use bounding boxes: rejoin a sentence split by a figure, pair captions with
-   figures and tables, restore paragraph breaks where the evidence is clear.
+1. Confirm on the real PDFs (owner): run the tests, rerun `one.pdf` with
+   `--fresh`, check in Overleaf that the neighbouring-column residue is gone
+   from the equation, and record the notes counts.
+2. Speed: run `time_docling`, decide which Docling settings to switch off or
+   make optional, and create `requirements-pdf.txt` with a pinned Docling.
+3. Report suspicious text (glued words, lost hyphens, broken accents). Report
+   only; never change wording. Idea without a dictionary: compare each unusual
+   word with the words that appear elsewhere in the same paper.
+4. Bounding boxes: add the box to `Block`; rejoin a sentence split by a figure,
+   pair captions with figures and tables, restore paragraph breaks where the
+   evidence is clear, and clip formula boxes to their column.
 5. Tables to tabular (booktabs) from cell data; mark merged cells for review.
 6. Figures cropped into `figures/` with `\includegraphics` and captions.
 7. References: split the list, repair accents, optional DOI lookup (explicit
    button, reuse `doi.py` and `tidy.py`), then map [n] and [Name, Year] to
    `\cite{key}`. Run the cite checker on the result as a self-check.
 8. The Streamlit page in `pages/`: upload, Convert button, notes table, zip
-   download (main.tex, refs.bib, figures/), PDF page beside the LaTeX.
-9. Compile check when a TeX installation is found, with the log explained in
-   plain words.
-10. Later: IEEE-style headings (I., A.) and an IEEEtran output option, then
+   download (main.tex, refs.bib, figures/), cached results.
+9. Review view: the PDF crop beside the LaTeX of each equation, editable.
+   Idea: restore bold letters from the PDF's font information.
+10. Compile check when a TeX installation is found, with the log explained in
+    plain words.
+11. Later: IEEE-style headings (I., A.) and an IEEEtran output option, then
     scanned PDFs with OCR.
 
 ## 11. Git workflow
@@ -408,4 +471,7 @@ PDF to LaTeX, in this order (one step at a time):
 - Do not import Docling anywhere except inside `read_pdf`.
 - Do not "fix" suspicious PDF text silently. Flag it.
 - Do not use paid conversion services. The site stays free for now.
-- Do not commit PDFs, models or generated .tex files from private work.
+- Do not commit PDFs, models, saved `.blocks.json` files or generated .tex files
+  from private work.
+- Do not remove the "not compile-checked" note from an equation until a real
+  compile check exists.
