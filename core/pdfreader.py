@@ -44,8 +44,15 @@ def item_to_block(item):
 # Docling is imported here, inside the function, so the cite checker
 # still starts on a computer that does not have Docling installed.
 def read_pdf(path):
-    from docling.document_converter import DocumentConverter
-    document = DocumentConverter().convert(path).document
+    from docling.datamodel.base_models import InputFormat
+    from docling.datamodel.pipeline_options import PdfPipelineOptions
+    from docling.document_converter import DocumentConverter, PdfFormatOption
+
+    options = PdfPipelineOptions()
+    options.do_formula_enrichment = True      # asks Docling to turn equations into LaTeX
+    converter = DocumentConverter(format_options={
+        InputFormat.PDF: PdfFormatOption(pipeline_options=options)})
+    document = converter.convert(path).document
     blocks = []
     for item, _level in document.iterate_items():
         block = item_to_block(item)

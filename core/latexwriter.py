@@ -52,6 +52,51 @@ BODY_PARTS = {"abstract": "abstract", "keywords": "keywords", "index terms": "ke
               "references": "references", "bibliography": "references"}
 KEYWORDS_START = re.compile(r"^(index terms|keywords)\s*[-\u2013\u2014:]*\s*", re.I)
 
+# ===== SECTION 4b: equations =====
+# Docling's formula model returns LaTeX with spaces between tokens, which is
+# fine. Two things are handled here: the equation number it leaves inside the
+# text (kept with \tag so cross-references still match), and a cheap check
+# for broken LaTeX. The real test is compiling, which is still done by hand.
+NUMBER_AT_END = re.compile(r"\\q?quad\s*\(\s*(\d+(?:\.\d+)?)\s*\)\s*$")
+SPACED_WORD = re.compile(r"(?<![\\A-Za-z])(?:[a-z] ){2,}[a-z](?![A-Za-z])")
+
+
+def braces_balanced(latex):
+    depth = 0
+    for ch in re.sub(r"\\[{}]", "", latex):       # an escaped brace is not a brace
+        depth += (ch == "{") - (ch == "}")
+        if depth < 0:
+            return False
+    return depth == 0
+
+
+def formula_to_latex(text):
+    """Return (equation text or None, list of problems).
+    None means the formula failed the check and must stay a comment."""
+    latex = text.strip().strip("$").strip()
+    if not latex:
+        return None, ["no LaTeX returned"]
+    tag = ""
+    match = NUMBER_AT_END.search(latex)
+    if match:
+        latex, tag = latex[:match.start()].rstrip(" ,"), f"\\tag{{{match.group(1)}}}"
+    failures = []
+    if not braces_balanced(latex):
+        failures.append("unbalanced braces")
+    if latex.count("\\left") != latex.count("\\right"):
+        failures.append("\\left and \\right do not match")
+    if latex.count("\\begin") != latex.count("\\end"):
+        failures.append("\\begin and \\end do not match")
+    if failures:
+        return None, failures
+    warnings = []
+    if SPACED_WORD.search(latex):
+        warnings.append("a word may be spelled letter by letter (like d i a g)")
+    if "\\\\" in latex and "\\begin" not in latex:
+        latex = "\\begin{aligned}\n" + latex + "\n\\end{aligned}"
+        warnings.append("several lines: wrapped in aligned")
+    lines = ["\\begin{equation*}", latex] + ([tag] if tag else []) + ["\\end{equation*}"]
+    return "\n".join(lines), warnings
 
 # ===== SECTION 5: blocks -> LaTeX =====
 # One pass over the blocks with a "mode": front matter, abstract, keywords,
@@ -126,7 +171,17 @@ def blocks_to_latex(blocks):
         elif kind == "caption":
             body.append(f"% CAPTION (page {block.page}): " + " ".join(text.split()))
             note(block, "Caption kept as a comment; figures and tables come in later steps")
-        elif kind in ("formula", "table", "figure"):
+        elif kind == "formula":
+            equation, problems = formula_to_latex(text)
+            if equation:
+                body.append(equation)
+                note(block, "Equation inserted, not compile-checked" +
+                     "".join(f"; {p}" for p in problems))
+            else:
+                body.append(f"% FORMULA (page {block.page}): not inserted ({'; '.join(problems)}): "
+                            + " ".join(text.split()))
+                note(block, "Equation not inserted: " + "; ".join(problems))
+        elif kind in ("table", "figure"):
             shown = " ".join(text.split())[:100]
             body.append(f"% {kind.upper()} (page {block.page}): not converted yet {shown}".rstrip())
             note(block, f"{kind} not converted yet")
@@ -139,7 +194,7 @@ def blocks_to_latex(blocks):
     if not title:
         notes.append({"page": 0, "kind": "title", "message": "No title found"})
     head = ["% Compile with XeLaTeX or LuaLaTeX (the text is Unicode).",
-            r"\documentclass[11pt]{article}", r"\usepackage{fontspec}",
+            r"\documentclass[11pt]{article}", r"\usepackage{amsmath,amssymb}", r"\usepackage{fontspec}",
             r"\usepackage[margin=2.5cm]{geometry}",
             r"\title{%s}" % escape_latex(title),
             r"\author{%s}" % " \\\\\n  ".join(authors), r"\date{}",

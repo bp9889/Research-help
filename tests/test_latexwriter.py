@@ -1,5 +1,5 @@
 from core.latexwriter import (blocks_to_latex, escape_latex, is_numbered_heading,
-                              split_number)
+                              split_number, braces_balanced, formula_to_latex)
 from core.pdfreader import Block
 
 
@@ -93,3 +93,51 @@ def test_math_symbols_are_flagged():
 def test_skip_blocks_disappear():
     tex = blocks_to_latex(make(("heading", "T"), ("skip", "Page 3"), ("heading", "1. A"))).tex
     assert "Page 3" not in tex
+
+# ===== equations =====
+REAL = r"\hat { x } ( t , k ) = T \chi ( t , k ) , \quad \hat { \chi } ( t , k ) = U \hat { x } ( t , k ) \quad ( 4 )"
+
+
+def test_equation_number_becomes_tag():
+    equation, problems = formula_to_latex(REAL)
+    assert equation.startswith("\\begin{equation*}\n\\hat { x }")
+    assert equation.endswith("\\tag{4}\n\\end{equation*}")
+    assert "\\quad ( 4 )" not in equation
+    assert problems == []
+
+
+def test_formula_without_number_has_no_tag():
+    equation, _ = formula_to_latex(r"E = m c ^ { 2 }")
+    assert "\\tag" not in equation
+
+
+def test_broken_formula_is_refused():
+    assert formula_to_latex(r"\frac { a } { b")[0] is None
+    assert formula_to_latex(r"\left ( x")[0] is None
+    assert formula_to_latex(r"\begin{array} x")[0] is None
+    assert formula_to_latex("   ")[0] is None
+
+
+def test_escaped_braces_are_not_counted():
+    assert braces_balanced(r"\{ x \}")
+    assert not braces_balanced(r"} {")
+
+
+def test_letter_by_letter_word_is_warned():
+    _, problems = formula_to_latex(r"A = Y \, d i a g ( c _ { N } )")
+    assert any("letter by letter" in p for p in problems)
+
+
+def test_several_lines_are_wrapped_in_aligned():
+    equation, problems = formula_to_latex(r"a = b \\ c = d")
+    assert "\\begin{aligned}" in equation
+    assert any("aligned" in p for p in problems)
+
+
+def test_formula_block_in_a_document():
+    result = blocks_to_latex(make(("heading", "T"), ("heading", "1. Intro"),
+                                  ("formula", REAL), ("formula", r"\frac { a")))
+    assert "\\begin{equation*}" in result.tex
+    assert "% FORMULA (page 1): not inserted (unbalanced braces)" in result.tex
+    assert len(result.notes) == 2
+    assert "\\usepackage{amsmath,amssymb}" in result.tex
