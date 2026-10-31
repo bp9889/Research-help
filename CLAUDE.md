@@ -128,6 +128,16 @@ and wrap code in `st.container(height=...)`.
       doi.py                DOI and title lookup (uses the internet)
       pdfreader.py          PDF to Blocks; the ONLY file that knows Docling
       latexwriter.py        Blocks to a .tex text, plus notes and raw references
+      refextract.py         reference list from Blocks or pasted text: find the
+                            heading, split into references, read DOI/arXiv/year
+                            (offline)
+      refpdf.py             PDF file to references: reads fast first, and only a
+                            PDF with no text at all is read again with OCR
+      refverify.py          checks references and the DOIs in a .bib against
+                            Crossref (calls doi.py; no internet code of its own);
+                            check_connection() tests both services
+      health.py             one 0-100 score with reasons, reference profile,
+                            retraction list check (offline)
       roadmap.py            the project plan shown in the sidebar
     experiments/            small scripts: try_docling, try_writer (saved blocks and
                             timings), time_docling
@@ -221,6 +231,77 @@ Data flow: PDF -> `read_pdf` (Docling) -> list of `Block(kind, text, page)` ->
 - Comment lines are built with f-strings. A string that starts with `%` breaks
   Python `%` formatting; a test caught this.
 
+### 6c. Reference extractor, verifier and health report
+
+Data flow: PDF -> `read_pdf` (fast settings) -> Blocks -> `from_blocks`
+(or pasted text -> `from_text`) -> `Reference(raw, label, doi, arxiv, year)` ->
+(explicit button, internet) `verify_all` -> `Checked(status, why, record,
+candidates)` -> `build_bib` -> a draft .bib and a status table.
+
+- Attempts, in order: the printed DOI; the arXiv number through its own DOI
+  (`10.48550/arXiv.<number>`, resolved by doi.org like any other DOI, much
+  stronger than a title search); then a Crossref title search, which can only
+  guess. An identifier that resolves to a different title is never trusted,
+  but the next attempt still runs. For a printed identifier a title of even
+  one real word is enough; for a search guess three are needed.
+- Statuses: confirmed (printed DOI or arXiv number resolves and its title matches), likely
+  (no DOI; best Crossref hit agrees on title AND year), check (found
+  something that does not clearly match; guesses are written as `% guess:`
+  comments), not found, not checked (server trouble). A server problem
+  (no connection, 429, 5xx) is never reported as "not found". After three
+  connection failures in a row the rest are skipped.
+- "Agree" means at least 80% of the title's words (3 or more words, short
+  words ignored) appear in the printed reference.
+- Reader repairs (all tested): a DOI broken by a line wrap is repaired when the
+  space comes right after `10.xxxx/` or after a `-` or `/` inside it (the printed
+  text in `raw` is kept as it was); years 1800-2039 are accepted, but not
+  numbers inside page ranges or volumes, and an "Originally published ... (1942)"
+  note is ignored so the printed edition's year wins; page-number blocks are
+  dropped (1 to 3 digits only, so a year alone on a line stays); a piece that
+  starts with doi:, a link, an arXiv number or a page range is glued to the
+  reference before it; the heading may be a plain text block and has more
+  wordings (Reference list, Notes and references, Literature cited ...); pasted
+  lists with a hanging indent are split at the margin.
+- Headings are matched in many languages (German, French, Spanish, Portuguese,
+  Italian, Dutch, Turkish, Indonesian/Malay, Russian, Chinese/Japanese, Korean,
+  Arabic, Bengali, Hindi); the word list is `_HEADING_WORDS` in
+  `refextract.py`: add a language there. The non-Latin wordings were written
+  from memory and not tested on real PDFs.
+- A DOI broken after a full stop (`...CVPR.2016. 90`) keeps BOTH readings: the
+  short one in `doi`, the joined one in `alt_dois`. The verifier asks for the
+  second only when the first is a dead end, quietly, and trusts it only when
+  the title matches.
+- Pasted lists with no numbers, blank lines or indentation are split where a
+  line ends with a year, a DOI, a link or an arXiv number and the next line
+  starts with a capital letter; a line starting with doi, a link, url, arXiv,
+  page(s), pp, vol, volume, no or in is joined to the one before. If that finds
+  nothing, it falls back to one reference per line, with a warning.
+- Scans: `refpdf.references_from_pdf` reads without OCR first; only when the
+  result has no text at all does it read again with `ocr=True` (about twice the
+  time) and adds a note that OCR can misread letters. If the OCR packages are
+  missing the note says so and points to the paste tab.
+- Every failure the reader can see becomes a note: no text (a scan), no heading,
+  stopped at a heading, pieces joined, no numbers read, two DOIs or an
+  unusually long text in one reference (may be two joined), line-by-line split.
+- Nothing is invented: a reference that was not matched becomes
+  `@misc{refN, note = {printed text}}` and nothing else.
+- `refextract.py` copies the DOI pattern from `doi.py` instead of importing
+  it, so the offline code never imports the internet module.
+- The health score: each problem type has a maximum number of points; it is
+  reached when 25% of the items are affected (2% of DOIs for retracted
+  papers), and any problem costs at least 15% of its maximum. Checks that were
+  not run (DOI check, retraction file, `\nocite{*}`) are listed under
+  "not counted", never scored as good.
+- Retractions: the owner downloads the Retraction Watch CSV from Crossref
+  and uploads it; it is read locally. Columns used: `OriginalPaperDOI`,
+  `RetractionDOI`, `RetractionNature` (the last is optional). Column names are
+  from Crossref's documentation page and are matched loosely (capitals, spaces
+  and underscores are ignored, and a column that merely contains the name is a
+  last resort). If the file is still refused, the message lists the columns it
+  found so the name can be corrected in `health.py`.
+  A per-DOI lookup through the Crossref API was NOT built: no documented
+  single-DOI retraction query was found.
+
 ## 7. Conventions
 
 - Add or change behaviour only together with tests in `tests/`.
@@ -253,6 +334,42 @@ Data flow: PDF -> `read_pdf` (Docling) -> list of `Block(kind, text, page)` ->
   they were and listed in the change log as "tidy skipped". Tidy never
   removes duplicates; use the merge actions for that. A comment written
   after a closing brace on the same line moves to its own line.
+
+### 8b. Known limitations (reference extractor and health report)
+
+Tested on invented lists, on fake Crossref answers, and (by hand, not in the
+repository) on the real reference list of one arXiv paper: 22 of 22 references
+found, numbers and years right. No reader can promise every PDF. What still fails:
+
+- Scanned PDFs are read with OCR as a second try. This was tested with a fake
+  reader only, not with real OCR on a real scan. OCR misreads letters (O/0,
+  l/1), so DOIs from a scan are the least reliable part: compare them.
+- Heading words in a language that is not in `_HEADING_WORDS` are not known; the
+  note then says no heading was found and points to the paste tab.
+- A DOI broken after a full stop has two readings; if neither resolves, the
+  reference goes to a title search instead.
+- Author-year lists pasted with no numbers, blank lines or indentation are split
+  by the closing-mark rule above. A reference that does not end in a year, DOI,
+  link or arXiv number is not recognised as ended and may be joined to the next
+  one; the warning says to check the list.
+- A list that Docling reads as one huge block without numbers cannot be split;
+  the "unusually long" or "two DOIs" note is the only sign.
+- The reader stops at the next heading after "References", so a heading inside
+  the list (for example "Journal articles") ends it early; a note says where.
+- Titles in other languages or with heavy maths may not reach 80% word overlap
+  and show up as "check". Accents damaged by the PDF are not repaired.
+- The arXiv-number route needs the arXiv DOI to be registered; a very new
+  preprint may not resolve yet and falls back to a title search.
+- Crossref was never reached from the development environment: the answer shape
+  follows `core/doi.py` and fake answers. Press "Test the connection" (in the
+  DOI expander, needs your email) once; it says which of doi.org and Crossref
+  answered, and what went wrong if one did not.
+- Retraction Watch column names (`OriginalPaperDOI`, `RetractionDOI`,
+  `RetractionNature`) come from Crossref's documentation page and could not be
+  checked against the real file. If the CSV is refused, compare its header.
+- A small project scores harshly: one broken entry out of four is already a
+  quarter of the items. The score shows 100 until the optional online checks
+  are run; the page says which checks were not run.
 
 ## 9. PDF to LaTeX: problems you will probably face
 
@@ -385,8 +502,16 @@ come from memory of the library's API or licence and must be checked.
 
 ### 9F. Speed
 
-Conversion on a CPU is slow, and equation recognition adds to it. The owner
-has not yet measured where the time goes. Plans, in order:
+Conversion on a CPU is slow, and equation recognition adds to it.
+
+Measured (one arXiv paper, 17 pages, CPU only, models already downloaded,
+4 threads, `experiments/time_docling`): text only 17 s; + tables 18 s; + OCR
+35 s; + formulas 474 s; everything on 480 s. The first two pages alone have no
+equations, so a short test can hide the cost: equation time grows with the
+number of equations, not pages. This Docling version defaults to
+`do_ocr=True, do_table_structure=True, do_formula_enrichment=False`, so the
+old `read_pdf` ran all three. `read_pdf` now keeps all three off unless asked.
+Plans, in order:
 
 1. Measure with `experiments/time_docling.py` (five settings, first pages only).
 2. Saved blocks, so only the first run is slow (done: `save_blocks`).

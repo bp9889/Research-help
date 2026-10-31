@@ -1,4 +1,8 @@
 # ===== SECTION 1: imports =====
+import datetime
+import os
+import tempfile
+
 import pandas as pd
 import streamlit as st
 
@@ -9,6 +13,10 @@ from core.doi import (clean_doi, csl_to_bibtex, fetch_csl, missing_fields, searc
                       suggest_key, valid_key)
 from core.export import findings_to_csv
 from core.fields import check_fields, find_same_paper, find_same_paper_groups
+from core.health import build_health, find_retracted, load_retraction_list
+from core.refextract import from_text
+from core.refverify import (CHECK, CONFIRMED, LIKELY, NOT_CHECKED, NOT_FOUND, build_bib, check_connection,
+                            check_bib_dois, verify_all)
 
 from core.roadmap import ICON, ROADMAP, score
 
@@ -85,6 +93,11 @@ def load_paper(doi, email):
 with st.expander("Add a reference from a DOI or a title (needs internet)"):
     email = st.text_input("Your email (sent to the server in the User-Agent, as Crossref asks)")
     ready = "@" in email
+    if st.button("Test the connection", disabled=not ready,
+                 help="Looks up one well-known paper on each service. Nothing is saved."):
+        with st.spinner("Asking doi.org and Crossref..."):
+            for service, worked, said in check_connection(email):
+                (st.success if worked else st.error)(f"{service}: {said}")
     by_doi, by_title = st.tabs(["I have a DOI", "Search by title"])
     with by_doi:
         doi_text = st.text_input("DOI or doi.org link")
@@ -127,6 +140,78 @@ with st.expander("Add a reference from a DOI or a title (needs internet)"):
                 st.warning(f"The server did not send: {gaps[0]['missing']}. Add it by hand if you need it.")
             st.caption("Copy it into your .bib file, then upload the .bib again.")
 
+# ===== SECTION 4c: get the reference list out of a paper (PDF or pasted text) =====
+# Reading the list happens on your computer. Checking it against Crossref needs
+# the internet and only starts when you press its button, like the box above.
+# The result is a DRAFT .bib for you to read: every reference says how sure we
+# are, and a reference we could not match keeps its printed text, nothing more.
+def references_from_pdf(uploaded):
+    from core.refpdf import references_from_pdf as read_references   # Docling is loaded only now
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        tmp.write(uploaded.getvalue())
+    try:
+        return read_references(tmp.name)      # fast settings first; OCR only for a scan
+    finally:
+        os.remove(tmp.name)
+
+
+def remember_references(refs, notes):
+    st.session_state["refs"], st.session_state["ref_notes"] = refs, notes
+    st.session_state.pop("ref_checked", None)    # old results belong to the old list
+
+
+with st.expander("Get the references out of a paper (PDF or pasted text)"):
+    from_pdf, from_paste = st.tabs(["Upload a PDF", "Paste the list"])
+    with from_pdf:
+        pdf = st.file_uploader("The paper (a PDF where you can select the text)", type=["pdf"],
+                               key="ref_pdf")
+        if st.button("Read the references", disabled=pdf is None):
+            try:
+                with st.spinner("Reading the PDF. The first time also loads the models..."):
+                    remember_references(*references_from_pdf(pdf))
+            except ModuleNotFoundError as err:
+                st.error(f"Reading PDFs needs a package that is not installed ({err.name}). "
+                         "Install it with: python -m pip install docling. "
+                         "Or use the 'Paste the list' tab.")
+            except Exception as err:             # a damaged PDF must not crash the page
+                st.error(f"Could not read that PDF ({type(err).__name__}). Try the 'Paste the list' tab.")
+    with from_paste:
+        pasted = st.text_area("Paste the reference list (the heading 'References' is optional)",
+                              height=200, key="ref_paste")
+        if st.button("Split into references", disabled=not pasted.strip()):
+            remember_references(*from_text(pasted))
+
+    for note in st.session_state.get("ref_notes", []):
+        st.warning(note)
+    refs = st.session_state.get("refs", [])
+    if refs:
+        st.write(f"{len(refs)} reference(s) found, {sum(1 for r in refs if r.doi)} with a printed DOI.")
+        st.dataframe(pd.DataFrame([{"#": r.label, "DOI": r.doi, "arXiv": r.arxiv, "year": r.year,
+                                    "reference": r.raw[:120]} for r in refs]), width="stretch")
+        if not ready:
+            st.caption("To check them, type your email in the box above (Crossref asks for it).")
+        if st.button("Check them against Crossref (needs internet)", disabled=not ready):
+            bar = st.progress(0.0, text="Checking...")
+            st.session_state["ref_checked"] = verify_all(
+                refs, email, cache=st.session_state.setdefault("lookup_cache", {}),
+                progress=lambda done, total: bar.progress(done / total, text=f"Checked {done} of {total}"))
+            bar.empty()
+
+    checked = st.session_state.get("ref_checked")
+    if checked:
+        counts = {s: sum(1 for c in checked if c.status == s)
+                  for s in (CONFIRMED, LIKELY, CHECK, NOT_FOUND, NOT_CHECKED)}
+        for column, (status, n) in zip(st.columns(5), counts.items()):
+            column.metric(status.capitalize(), n)
+        bib_text, rows = build_bib(checked, {e.key for e in read_entries(bib_files)})
+        st.dataframe(pd.DataFrame(rows), width="stretch")
+        st.caption("confirmed: the DOI resolves and its title matches. likely: best match agrees on "
+                   "title and year. check: Crossref found something that does not clearly match, "
+                   "see the guesses in the file. Always compare the draft with the PDF.")
+        st.code(bib_text, language="latex", height=300)
+        st.download_button("Download references.bib (draft)", data=bib_text.encode("utf-8"),
+                           file_name="references.bib", mime="text/plain")
+
 if not tex_files or not bib_files:
     st.info("Give me at least one .tex file and one .bib file to start.")
     st.stop()                      # nothing below runs until both are present
@@ -160,6 +245,75 @@ m2.metric("Unused", len(report.unused))
 m3.metric("Duplicate keys", len(report.duplicates))
 m4.metric("Case mismatches", len(report.case_mismatch))
 
+# ===== SECTION 6a: the health report =====
+# One score with the reasons under it. The box is created first so it sits at
+# the top, but it is filled in LAST: the optional checks below run before it,
+# so a result you just fetched is already in the score when it is drawn.
+health_box = st.container()
+
+@st.cache_data(show_spinner="Reading the list...")
+def read_retraction_file(raw):
+    return load_retraction_list(raw.decode("utf-8-sig", errors="replace"))
+
+with st.expander("Optional checks that make the score more complete"):
+    st.markdown("**DOIs in your .bib** (needs internet): do they exist, and do they point to the "
+                "paper you meant?")
+    if not ready:
+        st.caption("Type your email in the box near the top first (Crossref asks for it).")
+    if st.button("Check the DOIs", disabled=not ready):
+        bar = st.progress(0.0, text="Checking...")
+        rows_, how_many, message_ = check_bib_dois(
+            entries, email, cache=st.session_state.setdefault("lookup_cache", {}),
+            progress=lambda done, total: bar.progress(done / total, text=f"Checked {done} of {total}"))
+        bar.empty()
+        st.session_state["doi_check"] = {"signature": tuple((e.key, e.raw) for e in entries),
+                                         "rows": rows_, "checked": how_many, "message": message_}
+    st.markdown("**Retracted or corrected papers** (no internet: the file is read on your computer). "
+                "Download the Retraction Watch data from the "
+                "[Crossref page](https://www.crossref.org/documentation/retrieve-metadata/retraction-watch/) "
+                "and upload the CSV here.")
+    retraction_file = st.file_uploader("Retraction Watch CSV", type=["csv"], key="retraction_csv")
+
+doi_state = st.session_state.get("doi_check")
+if doi_state and doi_state["signature"] != tuple((e.key, e.raw) for e in entries):
+    doi_state = None               # the .bib changed since the check, so its result is out of date
+retraction_table = None
+if retraction_file is not None:
+    retraction_table, retraction_message = read_retraction_file(retraction_file.getvalue())
+    if retraction_message:
+        st.error(retraction_message)
+        retraction_table = None
+
+field_rows = check_fields(entries)
+health = build_health(
+    report, citations, entries, field_rows, find_same_paper_groups(entries),
+    datetime.date.today().year,
+    doi_rows=doi_state["rows"] if doi_state else None,
+    doi_checked=doi_state["checked"] if doi_state else 0,
+    retracted=find_retracted(entries, retraction_table) if retraction_table is not None else None)
+
+with health_box:
+    st.subheader("Citation health")
+    left, right = st.columns([1, 4])
+    left.metric("Score", f"{health.score} / 100")
+    left.write(f"**{health.label}**")
+    right.dataframe(pd.DataFrame(
+        [{"problem": i.check, "affected": f"{i.affected} of {i.out_of}",
+          "points lost": i.penalty, "what to do": i.advice} for i in health.items]),
+        width="stretch", hide_index=True)
+    p = health.profile
+    if "oldest year" in p:
+        st.caption(f"Your references: {p['entries']} entries, from {p['oldest year']} to "
+                   f"{p['newest year']} (median {p['median year']}), {p['older than 10 years']} older "
+                   f"than 10 years, {p['with a DOI']} with a DOI.")
+    if health.not_run:
+        st.caption("Not counted in the score because they were not run: " + "; ".join(health.not_run) + ".")
+    if doi_state and doi_state["message"]:
+        st.warning(doi_state["message"])
+    if doi_state and doi_state["rows"]:
+        st.write("DOI problems found:")
+        st.dataframe(pd.DataFrame(doi_state["rows"]), width="stretch", hide_index=True)
+
 show_finding("Missing from the .bib", report.missing, "Every citation has a matching entry.")
 if report.nocite_all:
     st.subheader("Unused entries")
@@ -168,7 +322,7 @@ else:
     show_finding("Unused entries", report.unused, "Every entry in the .bib is cited.")
 show_finding("Duplicate keys in the .bib", report.duplicates, "No duplicate keys.")
 show_finding("Case mismatches", report.case_mismatch, "No case mismatches.")
-show_finding("Entries with missing fields", check_fields(entries),
+show_finding("Entries with missing fields", field_rows,
              "Every entry has its required fields.")
 show_finding("Possible same paper under different keys", find_same_paper(entries),
              "No look-alike entries found.")
