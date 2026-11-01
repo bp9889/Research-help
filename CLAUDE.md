@@ -2,7 +2,7 @@
 
 Read this file first. It explains what the project is, how it is built, the
 rules the owner cares about, the problems already found, and where to help next.
-Last updated: 31 October 2026.
+Last updated: 1 November 2026.
 
 ## 1. What this project is
 
@@ -16,8 +16,9 @@ files and gets a report plus safe, previewed corrections. BibTeX tidy, DOI to
 BibTeX import, same-paper merge and CSV export are built too. Parked for later:
 the renumber tool and the paper tracker.
 
-Tool 2, PDF to LaTeX: the current focus. The reader, the writer and display
-equations work; figures, tables, captions and the reference list are still
+Tool 2, PDF to LaTeX: the current focus. The reader and the writer work, and
+display equations work when equation decoding is switched on (it is OFF by
+default since the speed fix, see 9F); figures, tables, captions and the reference list are still
 placeholders. It turns a
 born-digital PDF (one that has a text layer) into a draft LaTeX project, using
 only free Python libraries that run on the owner's computer (Docling first).
@@ -193,8 +194,8 @@ Data flow: PDF -> `read_pdf` (Docling) -> list of `Block(kind, text, page)` ->
   figure, skip (page headers and footers), other. An unknown Docling label
   becomes "other" and is shown, never lost.
 - `item_to_block` only uses `.label`, `.text` and `.prov`, so tests use small
-  fake items and do not need Docling. Docling is imported inside `read_pdf`,
-  so the cite checker still starts without it.
+  fake items and do not need Docling. Docling is imported lazily inside
+  `_converter` (called by `read_pdf`), so the cite checker still starts without it.
 - Docling gives every heading the same level. The level comes from the section
   number: 3 is a section, 3.1 a subsection, 3.1.2 a subsubsection. A plain
   text line like "1. INTRODUCTION" is promoted to a heading only by the strict
@@ -209,9 +210,10 @@ Data flow: PDF -> `read_pdf` (Docling) -> list of `Block(kind, text, page)` ->
 - `escape_latex` changes one character at a time, so nothing is escaped twice.
 - Paragraphs with math-like characters (Greek, math operators, math-italic
   letters) get a note. The text itself is left as it is.
-- `read_pdf` switches on Docling's formula recognition. Each formula comes back
-  as LaTeX with spaces between tokens (`\hat { x } ( t , k )`), usually with
-  the equation number inside the text (`\quad ( 2 )`).
+- Docling's formula recognition is OFF by default. `read_pdf(path, formulas=True)`
+  switches it on; it is by far the slowest step (see 9F). With it on, each
+  formula comes back as LaTeX with spaces between tokens (`\hat { x } ( t , k )`),
+  usually with the equation number inside the text (`\quad ( 2 )`).
 - `formula_to_latex` turns the number into `\tag{n}` inside an `equation*`
   environment (the preamble loads amsmath and amssymb), so numbers and
   cross-references still match the paper. It checks braces, \left/\right and
@@ -398,7 +400,8 @@ come from memory of the library's API or licence and must be checked.
   using any of them).
 - Docling calls used in `read_pdf` (`DocumentConverter().convert`,
   `document.iterate_items()`, `item.label.value`, `item.prov[0].page_no`) were
-  written from memory of the API. (verify) If a name errors, fix it in
+  written from memory of the API and have since run on the owner's computer
+  (the timings in 9F). If a name errors after a Docling update, fix it in
   `pdfreader.py` only.
 
 ### 9B. What the test papers showed (seen)
@@ -407,9 +410,9 @@ come from memory of the library's API or licence and must be checked.
    "1. INTRODUCTION") arrive as plain text. Handled by numbering rules.
    IEEE papers use roman numerals and letters (I., A.). Not handled yet.
 2. Every display equation was exported as "formula-not-decoded". Docling's
-   formula recognition is off by default; switching it on (an option such as
-   `do_formula_enrichment` in the pipeline options, verify the name) needs an
-   extra model download.
+   formula recognition is off by default; `do_formula_enrichment=True` in the
+   pipeline options switches it on (name checked on the owner's computer) and
+   needs an extra model download.
 3. Inline math is flattened. C_p arrives as math-italic letters with the
    subscript on the baseline, R^C arrives as "RC", (N+1)^2 as "(N+1)2". The
    text layer has lost the structure. Rebuilding it needs character positions
@@ -468,7 +471,9 @@ come from memory of the library's API or licence and must be checked.
 - Footnotes, algorithm blocks and code appear as "other" blocks.
 - Multi-line display equations, equation numbers and cross-references
   ("Eq. (3)", "Fig. 2") have no \label or \ref yet.
-- Scanned PDFs have no text layer and need OCR (a later phase).
+- Scanned PDFs have no text layer and need OCR. `read_pdf(path, ocr=True)` exists
+  and `core/refpdf.py` uses it for the reference extractor only; the converter
+  itself does not offer it yet (a later phase).
 - Very long documents (theses): memory and time.
 
 ### 9D. Testing gaps
@@ -480,6 +485,9 @@ come from memory of the library's API or licence and must be checked.
 - The writer tests use hand-made Blocks. After each new real-PDF finding, add
   a Block list that reproduces it as a test (for example the figure that
   interrupts a sentence) before fixing it.
+- The OCR fallback in `core/refpdf.py` is tested with a fake reader only. Try it
+  once on a real scanned PDF (a screenshot printed to PDF is enough) and note
+  what OCR does to DOIs and accents.
 - Ground truth: for arXiv papers the original LaTeX source can be downloaded.
   Compare the converter output with it to measure quality (keep it in
   `local_data/`).
@@ -514,17 +522,29 @@ old `read_pdf` ran all three. `read_pdf` now keeps all three off unless asked.
 Plans, in order:
 
 1. Measure with `experiments/time_docling.py` (five settings, first pages only).
+   Done: the numbers above are from the owner's computer.
 2. Saved blocks, so only the first run is slow (done: `save_blocks`).
-3. Switch off what a born-digital PDF does not need: OCR, perhaps table
-   recognition, and make equations optional ("quick draft", then "add
-   equations"). Option names such as `do_ocr`, `do_table_structure` and
-   `do_formula_enrichment` and the `page_range` argument are from memory.
-   (verify)
-4. Convert only the first pages while developing.
-5. Use all CPU threads (Docling has accelerator options; verify the name).
+3. Switch off what a born-digital PDF does not need. Done: `read_pdf(path, *,
+   formulas=False, ocr=False, tables=False, pages=None, threads=4)`. The option
+   names `do_ocr`, `do_table_structure` and `do_formula_enrichment` and their
+   defaults (True, True, False) were checked on the owner's computer; the
+   `page_range` argument worked there too. The converter is built once per
+   settings and kept in `_CONVERTERS`.
+4. Convert only the first pages while developing: `pages=2` (done).
+5. Threads: set through `AcceleratorOptions(num_threads=...)` inside a
+   try/except, so an older Docling that lacks it still runs. Not measured on its
+   own, and the name is from memory (verify).
 6. For a public site, assume conversion is heavy: limit the page count, show a
    progress bar and an estimate, cache results by file hash, or use the tool
    locally. Decide when the Streamlit page is built.
+7. Open: a time budget for equations ("decode as many as fit in N minutes").
+   Without a GPU, a paper with many equations cannot reach 2 to 3 minutes with
+   decoding on; text, headings and the reference list can.
+
+Known gap: `experiments/try_writer.py` calls `read_pdf(path)` with no options, so
+it does not decode equations any more. What the writer then does with the
+formula blocks has not been checked. Add a `--formulas` flag before judging
+equation quality with that script.
 
 ### 9G. Working together
 
@@ -549,13 +569,16 @@ Cite checker (parked):
    use bundled sample data unless processing moves into the browser.
 
 PDF to LaTeX, in this order (one step at a time). Done: the reader and writer
-slice, and equations inserted with number tags and checks.
+slice, equations inserted with number tags and checks, and the speed fix (9F).
+Done on the cite-checker side: the reference extractor, the Crossref check and
+the health report (6c).
 
 1. Confirm on the real PDFs (owner): run the tests, rerun `one.pdf` with
    `--fresh`, check in Overleaf that the neighbouring-column residue is gone
    from the equation, and record the notes counts.
-2. Speed: run `time_docling`, decide which Docling settings to switch off or
-   make optional, and create `requirements-pdf.txt` with a pinned Docling.
+2. Speed: the settings are now optional and measured (9F). Still open:
+   `requirements-pdf.txt` with a pinned Docling, a `--formulas` flag for
+   `try_writer`, and a time budget for equations.
 3. Report suspicious text (glued words, lost hyphens, broken accents). Report
    only; never change wording. Idea without a dictionary: compare each unusual
    word with the words that appear elsewhere in the same paper.
@@ -564,9 +587,11 @@ slice, and equations inserted with number tags and checks.
    evidence is clear, and clip formula boxes to their column.
 5. Tables to tabular (booktabs) from cell data; mark merged cells for review.
 6. Figures cropped into `figures/` with `\includegraphics` and captions.
-7. References: split the list, repair accents, optional DOI lookup (explicit
-   button, reuse `doi.py` and `tidy.py`), then map [n] and [Name, Year] to
-   `\cite{key}`. Run the cite checker on the result as a self-check.
+7. References: splitting the list, reading DOIs and the explicit-button Crossref
+   check already exist as the reference extractor (`refextract.py`,
+   `refverify.py`, 6c). Still open: repair accents, then map [n] and
+   [Name, Year] in the converted text to `\cite{key}`. Run the cite checker on
+   the result as a self-check.
 8. The Streamlit page in `pages/`: upload, Convert button, notes table, zip
    download (main.tex, refs.bib, figures/), cached results.
 9. Review view: the PDF crop beside the LaTeX of each equation, editable.
@@ -581,8 +606,15 @@ slice, and equations inserted with number tags and checks.
 - `main` always passes the tests.
 - One branch per feature: `git switch -c feature-name`. The PDF tool lives on
   `pdf-to-latex` until the first slice is confirmed.
-- Run `python -m pytest -q` before every push.
+- Run `python -m pytest -q` before every push (323 tests on 1 November 2026).
 - Open a pull request; the owner reviews and merges.
+- To review a pull request on your own computer, fetch it into a throw-away
+  branch, run the tests, then try the page:
+  `git fetch origin pull/<number>/head:pr-check`, `git switch pr-check`,
+  `python -m pytest -q`, `python -m streamlit run app.py`. Press "Test the
+  connection" first: it shows whether the internet checks can work at all.
+  The Crossref parts were written against fake answers, so a first real run is
+  worth reporting back either way.
 - Run `git pull` before starting work, and tell each other which files you are
   editing to avoid conflicts.
 
@@ -593,10 +625,11 @@ slice, and equations inserted with number tags and checks.
 - Do not mix cleaning and renumbering.
 - Do not add features without tests.
 - Do not paste real thesis content into issues, tests or commits.
-- Do not import Docling anywhere except inside `read_pdf`.
+- Do not import Docling anywhere except in `core/pdfreader.py` (inside
+  `_converter`, so the cite checker still starts without Docling).
 - Do not "fix" suspicious PDF text silently. Flag it.
 - Do not use paid conversion services. The site stays free for now.
 - Do not commit PDFs, models, saved `.blocks.json` files or generated .tex files
   from private work.
 - Do not remove the "not compile-checked" note from an equation until a real
-  compile check exists.
+  compile check exists.
